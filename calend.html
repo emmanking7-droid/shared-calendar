@@ -1,0 +1,322 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>Shared Calendar — Live Share Ready</title>
+  <meta name="description" content="A single-file calendar with optional live sharing via Firebase (paste your config). Falls back to local-only if not enabled." />
+  <!-- CSP keeps things safe but allows Firebase ESM imports when live sync is enabled. -->
+  <meta http-equiv="Content-Security-Policy" content="default-src 'self'; img-src 'self' data:; style-src 'self' 'unsafe-inline' https://fonts.googleapis.com; font-src https://fonts.gstatic.com; script-src 'self' 'unsafe-inline' https://www.gstatic.com; connect-src 'self' https://firestore.googleapis.com; object-src 'none'; base-uri 'none'">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;600;700;800&display=swap" rel="stylesheet">
+  <style>
+    :root{
+      --bg:#0b0d12; --panel:#0f131a; --panel-2:#11141b; --text:#e9edf1; --muted:#a7b0bb; --brand:#6aa7ff; --brand2:#7ef0d3; --radius:16px;
+      --ring:0 0 0 3px rgba(106,167,255,.35); --shadow:0 10px 30px rgba(0,0,0,.35); --shadow-sm:0 4px 14px rgba(0,0,0,.25);
+      --grid: clamp(14px, 2.4vw, 22px); --maxw:1100px; --cell-bg:#0d121c; --cell-border:#293043; --cell-hover:#162034;
+    }
+    *{box-sizing:border-box}
+    html,body{height:100%}
+    body{margin:0; font-family:Inter, ui-sans-serif, system-ui, -apple-system, Segoe UI, Roboto, Helvetica, Arial; background:var(--bg); color:var(--text)}
+    a{color:var(--text); text-decoration:none}
+    .container{max-width:var(--maxw); margin-inline:auto; padding:0 var(--grid)}
+    header{position:sticky; top:0; z-index:10; backdrop-filter:blur(10px); background:linear-gradient(180deg, rgba(11,13,18,.78), rgba(11,13,18,.45)); border-bottom:1px solid rgba(255,255,255,.06)}
+    .nav{display:flex; align-items:center; justify-content:space-between; height:70px}
+    .logo{display:flex; align-items:center; gap:10px; font-weight:800}
+    .logo-mark{height:28px; width:28px; border-radius:8px; background:conic-gradient(from 220deg, var(--brand), var(--brand2)); box-shadow:0 0 30px rgba(106,167,255,.35)}
+    .controls{display:flex; gap:8px; align-items:center; flex-wrap:wrap}
+    .btn{display:inline-flex; align-items:center; gap:8px; padding:10px 14px; border-radius:9999px; border:1px solid #2a2f39; background:#0f131a; color:var(--text); font-weight:600}
+    .btn.primary{background:linear-gradient(135deg, var(--brand), var(--brand2)); color:#0b0d12; border-color:transparent}
+    .btn:focus{outline:none; box-shadow:var(--ring)}
+
+    .hero{padding: clamp(16px, 3.2vw, 28px) 0}
+    .sub{color:var(--muted)}
+
+    /* Calendar */
+    .calendar{background:linear-gradient(180deg, rgba(255,255,255,.05), rgba(255,255,255,.02)); border:1px solid rgba(255,255,255,.08); border-radius:var(--radius); box-shadow:var(--shadow-sm); overflow:hidden}
+    .cal-head{display:flex; align-items:center; justify-content:space-between; padding:12px}
+    .cal-grid{display:grid; grid-template-columns:repeat(7,1fr); border-top:1px solid rgba(255,255,255,.08)}
+    .dow{padding:10px; text-align:center; color:var(--muted); font-weight:600; border-right:1px solid rgba(255,255,255,.06); background:var(--panel-2)}
+    .dow:last-child{border-right:0}
+    .cell{min-height:110px; border-top:1px solid var(--cell-border); border-right:1px solid var(--cell-border); padding:8px; position:relative; background:var(--cell-bg); transition:background .12s ease}
+    .cell:hover{background:var(--cell-hover)}
+    .cell:last-child{border-right:0}
+    .daynum{font-size:12px; color:var(--muted)}
+    .today .daynum{color:#fff; font-weight:800}
+    .other-month{opacity:.55}
+    .event{display:block; margin-top:6px; padding:6px 8px; border-radius:10px; background:#1a2030; border:1px solid rgba(255,255,255,.12); font-size:12px; line-height:1.3; cursor:pointer}
+    .event small{color:var(--muted)}
+
+    .toolbar{display:flex; gap:8px; align-items:center; flex-wrap:wrap}
+    .room{display:flex; gap:8px; align-items:center}
+    input[type="text"], input[type="date"], input[type="time"], textarea{background:#0c0f15; color:var(--text); border:1px solid #2a2f39; border-radius:10px; padding:10px 12px}
+
+    .row{display:flex; gap:10px; align-items:center}
+
+    /* Dialog */
+    dialog{border:none; border-radius:16px; background:#10151f; color:var(--text); width:min(560px, 92vw); box-shadow:var(--shadow)}
+    dialog::backdrop{background:rgba(0,0,0,.5)}
+    .muted{color:var(--muted)}
+
+    footer{padding:28px 0 60px; color:var(--muted)}
+
+    /* Tests */
+    #tests{margin-top:12px; font-size:12px}
+    .pass{color:#7ef0d3}
+    .fail{color:#ffa7a7}
+
+    .badge{font-size:12px; padding:4px 8px; border:1px solid #2a2f39; border-radius:10px; background:#0f131a}
+  </style>
+</head>
+<body>
+  <header>
+    <div class="container nav" role="navigation" aria-label="Main">
+      <a class="logo" href="#">
+        <span class="logo-mark" aria-hidden="true"></span>
+        <span>Shared Calendar</span>
+      </a>
+      <div class="controls">
+        <span id="liveBadge" class="badge" title="Local-only until you enable Live Sync">Local only</span>
+        <button class="btn" id="btnPrev" aria-label="Previous month">◀</button>
+        <div id="monthLabel" style="min-width:220px; text-align:center; font-weight:800"></div>
+        <button class="btn" id="btnNext" aria-label="Next month">▶</button>
+        <button class="btn primary" id="btnAdd">＋ Add activity</button>
+      </div>
+    </div>
+  </header>
+
+  <main class="container hero">
+    <section class="toolbar" aria-label="Sharing tools" style="gap:12px">
+      <div class="room">
+        <label for="roomId" class="muted">Room</label>
+        <input id="roomId" type="text" placeholder="e.g. family, team-alpha" />
+        <button class="btn" id="btnUseRoom">Use</button>
+      </div>
+      <button class="btn" id="btnCopyRoom">Copy live room link</button>
+      <button class="btn" id="btnSnapshot">Create snapshot link</button>
+      <button class="btn" id="btnLiveSync">Enable Live Sync</button>
+      <span class="sub" id="roomInfo"></span>
+    </section>
+
+    <section class="calendar" aria-label="Calendar">
+      <div class="cal-head">
+        <div class="sub">Click a day to add an activity. Click an activity to edit.</div>
+        <div class="sub">Data is saved per <strong>room</strong>. Share links below or enable <strong>Live Sync</strong> for real-time collaboration.</div>
+      </div>
+      <div class="cal-grid" id="dow"></div>
+      <div class="cal-grid" id="grid"></div>
+    </section>
+
+    <div id="tests" aria-live="polite"></div>
+  </main>
+
+  <footer>
+    <div class="container" style="display:flex; justify-content:space-between; gap:12px; flex-wrap:wrap">
+      <div>© <span id="year"></span> Shared Calendar.</div>
+      <div><strong>Share:</strong> Room link (local copies) or Live Sync (Firebase).</div>
+    </div>
+  </footer>
+
+  <!-- Add/Edit dialog -->
+  <dialog id="eventDialog">
+    <form method="dialog" id="eventForm">
+      <div style="display:flex; justify-content:space-between; align-items:center; gap:10px; padding:12px 16px 0">
+        <h3 style="margin:0">Activity</h3>
+        <button class="btn" value="cancel">✕</button>
+      </div>
+      <div style="padding:16px; display:grid; gap:10px">
+        <input type="hidden" id="evtId" />
+        <div class="row">
+          <label style="min-width:88px">Title</label>
+          <input required id="evtTitle" type="text" placeholder="Movie night" />
+        </div>
+        <div class="row">
+          <label style="min-width:88px">Date</label>
+          <input required id="evtDate" type="date" />
+        </div>
+        <div class="row">
+          <label style="min-width:88px">From</label>
+          <input required id="evtStart" type="time" value="18:00" />
+          <label>To</label>
+          <input required id="evtEnd" type="time" value="20:00" />
+        </div>
+        <div class="row">
+          <label style="min-width:88px">People</label>
+          <input id="evtPeople" type="text" placeholder="anna, omar, li" />
+        </div>
+        <div class="row">
+          <label style="min-width:88px">Notes</label>
+          <textarea id="evtNotes" rows="2" placeholder="Bring snacks"></textarea>
+        </div>
+        <div class="row">
+          <button class="btn primary" value="save">Save</button>
+          <button class="btn" id="btnDelete" type="button">Delete</button>
+        </div>
+        <div class="muted" id="conflictMsg" role="status" aria-live="polite"></div>
+      </div>
+    </form>
+  </dialog>
+
+  <!-- Live Sync config dialog -->
+  <dialog id="liveDialog">
+    <form method="dialog" id="liveForm" style="padding:16px; display:grid; gap:12px">
+      <h3 style="margin:0">Enable Live Sync (Firebase)</h3>
+      <p class="muted">Paste your Firebase <code>config</code> JSON from the Firebase Console. We'll use Firestore to sync the current room in real time.</p>
+      <textarea id="fbConfig" rows="8" placeholder='{"apiKey":"...","authDomain":"...","projectId":"..."}'></textarea>
+      <div class="row">
+        <button class="btn primary" value="enable">Enable</button>
+        <button class="btn" value="cancel">Cancel</button>
+      </div>
+      <small class="muted">Tip: Create a Firestore database in test mode while you're trying this. You can tighten rules later.</small>
+    </form>
+  </dialog>
+
+  <script type="module">
+    // ==== Utilities ====
+    const $ = (sel, root=document) => root.querySelector(sel);
+    const $$ = (sel, root=document) => Array.from(root.querySelectorAll(sel));
+    const uuid = () => (crypto?.randomUUID ? crypto.randomUUID() : 'id-' + Math.random().toString(36).slice(2));
+
+    // Date helpers
+    const fmtMonthYear = (d) => d.toLocaleString(undefined, {month:'long', year:'numeric'});
+    const pad = (n) => String(n).padStart(2,'0');
+    const toKey = (d) => `${d.getFullYear()}-${pad(d.getMonth()+1)}-${pad(d.getDate())}`;
+
+    // Room & storage
+    const getRoomFromUrl = () => new URL(location.href).searchParams.get('room') || 'default';
+    const storageKey = (room) => `shared-calendar:${room}`;
+
+    // Data access
+    function loadEvents(room){ try{ return JSON.parse(localStorage.getItem(storageKey(room))||'[]'); }catch{ return []; } }
+    function saveEvents(room, events){ localStorage.setItem(storageKey(room), JSON.stringify(events)); }
+
+    // Business rules
+    function compareTime(a,b){ return a.localeCompare(b); }
+    function validateEvent(evt){ if(!evt.title || !evt.date) return {ok:false, msg:'Title and date are required.'}; if(compareTime(evt.end, evt.start) <= 0) return {ok:false, msg:'End time must be after start time.'}; return {ok:true}; }
+
+    // Event operations
+    function addEvent(events, evt){ if(events.some(e=>e.id===evt.id)) throw new Error('Duplicate id'); const v = validateEvent(evt); if(!v.ok) throw new Error(v.msg); if(isConflict(events, evt)) evt.conflict=true; else evt.conflict=false; return [...events, evt]; }
+    function updateEvent(events, evt){ const v = validateEvent(evt); if(!v.ok) throw new Error(v.msg); return events.map(e=> e.id===evt.id ? {...evt, conflict:isConflict(events.filter(x=>x.id!==evt.id), evt)} : e); }
+    function deleteEvent(events, id){ return events.filter(e=>e.id!==id); }
+    function getEventsOn(events, dateKey){ return events.filter(e=>e.date===dateKey).sort((a,b)=>compareTime(a.start,b.start)); }
+    function isConflict(events, evt){ const overlap = (aStart,aEnd,bStart,bEnd)=> aStart < bEnd && bStart < aEnd; return events.filter(e=>e.date===evt.date && e.id!==evt.id).some(e=> overlap(e.start,e.end,evt.start,evt.end)); }
+
+    // UI State
+    let state = { room:getRoomFromUrl(), today:new Date(), cursor:new Date(new Date().getFullYear(), new Date().getMonth(), 1), events: loadEvents(getRoomFromUrl()) };
+
+    // Live sync state
+    const live = { enabled:false, app:null, db:null, unsub:null, writing:false, ref:null };
+
+    // Initial render
+    const gridEl = $('#grid'); const dowEl = $('#dow'); const monthLabel = $('#monthLabel');
+    $('#year').textContent = new Date().getFullYear();
+    ['Mon','Tue','Wed','Thu','Fri','Sat','Sun'].forEach(d=>{ const div=document.createElement('div'); div.className='dow'; div.textContent=d; dowEl.appendChild(div); });
+
+    function render(){
+      monthLabel.textContent = fmtMonthYear(state.cursor);
+      gridEl.innerHTML='';
+      const first = new Date(state.cursor.getFullYear(), state.cursor.getMonth(), 1);
+      const start = new Date(first);
+      let day = (first.getDay()+6)%7; start.setDate(first.getDate() - day);
+      const totalCells = 42;
+      for(let i=0;i<totalCells;i++){
+        const d = new Date(start); d.setDate(start.getDate()+i);
+        const k = toKey(d);
+        const cell = document.createElement('div'); cell.className='cell';
+        if(d.getMonth()!==state.cursor.getMonth()) cell.classList.add('other-month');
+        if(toKey(d)===toKey(state.today)) cell.classList.add('today');
+        const num = document.createElement('div'); num.className='daynum'; num.textContent=String(d.getDate()); cell.appendChild(num);
+        cell.setAttribute('role','button'); cell.setAttribute('aria-label',`Add activity on ${k}`);
+        cell.addEventListener('click', ()=> openDialog({ date:k, start:'18:00', end:'20:00' }));
+        const list = getEventsOn(state.events, k);
+        for(const e of list){ const a=document.createElement('button'); a.type='button'; a.className='event'; a.title=e.title; a.innerHTML=`<strong>${e.title}</strong><br><small>${e.start}–${e.end}${e.people? ' · '+e.people.join(', '):''}</small>${e.conflict? ' <small style="color:#ffa7a7">(conflict)</small>':''}`; a.addEventListener('click', (ev)=>{ ev.stopPropagation(); openDialog(e); }); cell.appendChild(a);}        
+        gridEl.appendChild(cell);
+      }
+      $('#roomInfo').textContent = `Room: ${state.room} (${state.events.length} activities)`;
+    }
+
+    // Dialog logic
+    const dlg = $('#eventDialog'); const form = $('#eventForm');
+    const idEl=$('#evtId'), titleEl=$('#evtTitle'), dateEl=$('#evtDate'), sEl=$('#evtStart'), eEl=$('#evtEnd'), pEl=$('#evtPeople'), nEl=$('#evtNotes');
+    const conflictMsg=$('#conflictMsg');
+    function openDialog(evt){ const isEdit=!!evt.id; idEl.value=evt.id||uuid(); titleEl.value=evt.title||''; dateEl.value=evt.date||toKey(new Date()); sEl.value=evt.start||'18:00'; eEl.value=evt.end||'20:00'; pEl.value=(evt.people||[]).join(', '); nEl.value=evt.notes||''; conflictMsg.textContent=''; $('#btnDelete').style.display=isEdit?'inline-flex':'none'; dlg.showModal(); }
+
+    $('#btnDelete').addEventListener('click', ()=>{ const id=idEl.value; state.events=deleteEvent(state.events,id); saveEvents(state.room,state.events); pushLive(); dlg.close(); render(); });
+
+    form.addEventListener('submit', (ev)=>{ ev.preventDefault(); const evt={ id:idEl.value, title:titleEl.value.trim(), date:dateEl.value, start:sEl.value, end:eEl.value, people:pEl.value.split(',').map(s=>s.trim()).filter(Boolean), notes:nEl.value.trim()}; const exists=state.events.some(e=>e.id===evt.id); const conflicts=isConflict(state.events, evt) && !(exists && !isConflict(state.events.filter(x=>x.id!==evt.id), evt)); conflictMsg.textContent=conflicts?'Warning: overlaps another activity.':''; try{ state.events= exists? updateEvent(state.events, evt) : addEvent(state.events, evt); saveEvents(state.room,state.events); pushLive(); dlg.close(); render(); }catch(err){ alert(err.message); } });
+
+    // Navigation
+    $('#btnPrev').addEventListener('click', ()=>{ state.cursor=new Date(state.cursor.getFullYear(), state.cursor.getMonth()-1, 1); render(); });
+    $('#btnNext').addEventListener('click', ()=>{ state.cursor=new Date(state.cursor.getFullYear(), state.cursor.getMonth()+1, 1); render(); });
+    $('#btnAdd').addEventListener('click', ()=> openDialog({ date: toKey(state.today) }));
+
+    // Room controls
+    const roomInput=$('#roomId'); roomInput.value=state.room;
+    $('#btnUseRoom').addEventListener('click', ()=>{ const r=roomInput.value.trim()||'default'; switchRoom(r); });
+    $('#btnCopyRoom').addEventListener('click', async ()=>{ const u=new URL(location.href); u.searchParams.set('room', state.room); await navigator.clipboard.writeText(u.toString()); alert('Room link copied! Anyone opening it will use the same room name. For real-time edits, enable Live Sync.'); });
+    $('#btnSnapshot').addEventListener('click', async ()=>{ const payload=btoa(unescape(encodeURIComponent(JSON.stringify(state.events)))); const u=new URL(location.href); u.hash=`data=${payload}`; await navigator.clipboard.writeText(u.toString()); alert('Snapshot link copied! Opening this link will import a snapshot of your activities.'); });
+
+    // Live Sync enable flow
+    const liveDlg = $('#liveDialog'); const liveForm=$('#liveForm'); const fbConfigEl=$('#fbConfig');
+    $('#btnLiveSync').addEventListener('click', ()=>{ fbConfigEl.value = localStorage.getItem('shared-calendar:fbconfig')||''; liveDlg.showModal(); });
+    liveForm.addEventListener('submit', async (e)=>{ e.preventDefault(); }); // prevent default form close
+    liveDlg.addEventListener('close', async ()=>{ if(liveDlg.returnValue!=="enable") return; try{ const cfg=JSON.parse(fbConfigEl.value||'{}'); await setupFirebase(cfg); localStorage.setItem('shared-calendar:fbconfig', JSON.stringify(cfg)); startLive(state.room); document.getElementById('liveBadge').textContent='Live sync on'; document.getElementById('liveBadge').style.borderColor='#2f8f5b'; document.getElementById('liveBadge').style.background='#0f1a14'; pushLive(true); }catch(err){ alert('Bad Firebase config: '+err.message); } });
+
+    async function setupFirebase(cfg){
+      if(!cfg || !cfg.apiKey || !cfg.projectId) throw new Error('Missing required fields (apiKey, projectId)');
+      const appMod = await import('https://www.gstatic.com/firebasejs/10.12.5/firebase-app.js');
+      const fsMod  = await import('https://www.gstatic.com/firebasejs/10.12.5/firebase-firestore.js');
+      const app = appMod.initializeApp(cfg);
+      live.db = fsMod.getFirestore(app);
+      live.doc = (room)=> fsMod.doc(live.db, 'rooms', room);
+      live.onSnapshot = fsMod.onSnapshot; live.setDoc = fsMod.setDoc;
+      live.enabled=true;
+    }
+
+    function startLive(room){ if(!live.enabled) return; if(live.unsub) live.unsub(); const ref=live.doc(room); live.ref=ref; live.unsub = live.onSnapshot(ref, (snap)=>{ const data=snap.data(); if(!data) return; if(live.writing) return; // ignore our own writes
+        const events = Array.isArray(data.events)? data.events: []; state.events = events; saveEvents(room, events); render(); }); }
+
+    async function pushLive(force=false){ if(!live.enabled || !live.ref) return; try{ live.writing=true; await live.setDoc(live.ref, { events: state.events, updatedAt: Date.now() }); } finally { setTimeout(()=> live.writing=false, 150); } }
+
+    function switchRoom(r){ state.room=r; state.events=loadEvents(r); const u=new URL(location.href); u.searchParams.set('room', r); history.replaceState(null,'',u); if(live.enabled) startLive(r); render(); }
+
+    // Snapshot import
+    (function importSnapshot(){ const m=location.hash.match(/data=([^&]+)/); if(!m) return; try{ const events = JSON.parse(decodeURIComponent(escape(atob(m[1])))); if(Array.isArray(events)){ const snapRoom=`${state.room}-import-${Date.now().toString(36)}`; saveEvents(snapRoom, events); const u=new URL(location.href); u.searchParams.set('room', snapRoom); u.hash=''; history.replaceState(null,'',u); state.room=snapRoom; state.events=events; roomInput.value=snapRoom; alert('Imported snapshot into a new room: '+snapRoom); if(live.enabled) startLive(state.room); } }catch(e){ console.warn('Bad snapshot'); } })();
+
+    // Render initial
+    render();
+
+    // ==== Tiny Test Suite (existing tests kept intact) ====
+    (function tests(){
+      const out = document.getElementById('tests');
+      const log = (ok,msg)=>{ const div=document.createElement('div'); div.className= ok? 'pass':'fail'; div.textContent=(ok?'✓ ':'✗ ')+msg; out.appendChild(div); if(!ok) console.error(msg); };
+      const r=[]; const d='2025-09-01';
+      let a = addEvent(r,{id:'1', title:'A', date:d, start:'10:00', end:'11:00', people:[]});
+      log(a.length===1,'addEvent inserts first event');
+      let b = addEvent(a,{id:'2', title:'B', date:d, start:'11:00', end:'12:00', people:[]});
+      log(b.length===2,'addEvent inserts non-overlapping event');
+      let cEvt = {id:'3', title:'C', date:d, start:'10:30', end:'11:30', people:[]};
+      log(isConflict(b,cEvt)===true,'isConflict detects overlap');
+      b = addEvent(b,{...cEvt});
+      log(b.find(x=>x.id==='3').conflict===true,'conflict flag set on overlapping add');
+      const updated = updateEvent(b,{id:'3', title:'C', date:d, start:'12:00', end:'13:00', people:[]});
+      log(updated.find(x=>x.id==='3').conflict===false,'updateEvent recalculates conflict');
+      const afterDel = deleteEvent(updated,'1');
+      log(afterDel.length===2 && !afterDel.find(x=>x.id==='1'),'deleteEvent removes by id');
+      log(getEventsOn(afterDel,d).length===2,'getEventsOn filters by date');
+      const t1 = addEvent([], {id:'t1', title:'X', date:d, start:'11:00', end:'12:00', people:[]});
+      const t2 = addEvent(t1, {id:'t2', title:'Y', date:d, start:'12:00', end:'13:00', people:[]});
+      log(isConflict(t1, {id:'tmp', title:'tmp', date:d, start:'12:00', end:'12:30'})===false, 'no conflict when an event starts exactly when another ends');
+      log(getEventsOn(t2,d)[0].id==='t1' && getEventsOn(t2,d)[1].id==='t2', 'getEventsOn sorts by start time');
+      let dupOk=false; try{ addEvent([{id:'z', title:'z', date:d, start:'09:00', end:'10:00'}], {id:'z', title:'z2', date:d, start:'10:00', end:'11:00'}); }catch{ dupOk=true; }
+      log(dupOk,'addEvent rejects duplicate ids');
+      let valOk=false; try{ addEvent([], {id:'v1', title:'Bad', date:d, start:'10:00', end:'09:59'}); }catch{ valOk=true; }
+      log(valOk,'validation rejects end <= start');
+      const day2 = '2025-09-02';
+      const setA = addEvent([], {id:'a1', title:'A1', date:d, start:'10:00', end:'11:00'});
+      log(isConflict(setA, {id:'a2', title:'A2', date:day2, start:'10:30', end:'10:45'})===false, 'no cross‑date conflict');
+      log(getEventsOn([], d).length===0, 'getEventsOn returns empty for no events');
+    })();
+  </script>
+</body>
+</html>
